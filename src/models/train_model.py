@@ -1,26 +1,24 @@
 import argparse
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from src.models.model import ImageClassifier
 from torch import nn, optim
-from torchvision import datasets, transforms
-
+import wandb
+from src.utils import get_data
+from src.visualization.visualize import get_embeddings, plot_embeddings
+import matplotlib.pyplot as plt
 
 def parser():
     """Parses command line."""
     parser = argparse.ArgumentParser(
-        description="Script for training an image classifier."
+        description='Script for training an image classifier.'
     )
-    parser.add_argument("--lr", default=3e-4, type=float)
-    parser.add_argument("--mb_size", default=64, type=int)
-    parser.add_argument("--epochs", default=10, type=int)
-    parser.add_argument("--dropout", default=0.25, type=float)
-    parser.add_argument("--model_path", default="models/model.pth", type=str)
-    parser.add_argument("--data_path", default="data/", type=str)
-    parser.add_argument(
-        "--fig_path", default="reports/figures/train_loss.pdf", type=str
-    )
+    parser.add_argument('--lr', default=3e-4, type=float)
+    parser.add_argument('--mb_size', default=64, type=int)
+    parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--dropout', default=0.25, type=float)
+    parser.add_argument('--model_path', default='models/model.pth', type=str)
+    parser.add_argument('--data_path', default='data/', type=str)
 
     args = parser.parse_args()
 
@@ -29,78 +27,115 @@ def parser():
 
 def save_checkpoint(filepath, model):
     """Saves model."""
-    checkpoint = {"kwargs": model.kwargs, "state_dict": model.state_dict()}
+    checkpoint = {'kwargs': model.kwargs, 'state_dict': model.state_dict()}
 
     torch.save(checkpoint, filepath)
 
 
-def train(args):
+def train(args, data_loader, test_steps=None):
     """Trains model."""
-    # Load data
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]
-    )
-    train_set = datasets.MNIST(
-        args.data_path, download=False, train=True, transform=transform
-    )
-    train_loader = torch.utils.data.DataLoader(
-        train_set, batch_size=args.mb_size, shuffle=True
-    )
 
-    if len(train_set.data.shape) == 4:
-        N, height, width, channels = train_set.data.shape
-    elif len(train_set.data.shape) == 3:
-        N, height, width = train_set.data.shape
+    if len(data_loader.dataset.data.shape) == 4:
+        N, height, width, channels = data_loader.dataset.data.shape
+    elif len(data_loader.dataset.data.shape) == 3:
+        N, height, width = data_loader.dataset.data.shape
         channels = 1
-
+    
     model = ImageClassifier(
         height=height,
         width=width,
         channels=channels,
-        classes=len(np.unique(train_set.targets)),
+        classes=len(np.unique(data_loader.dataset.targets)),
         dropout=args.dropout,
     )
+    wandb.config.update(model.kwargs)
+
+    if test_steps is not None:
+        init_weights = model.linear.weight.clone().detach()
 
     criterion = nn.NLLLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
-    train_losses = list()
+    wandb.watch(model, criterion, log='all', log_freq=10)
+
+    batch = 0
     for epoch in range(args.epochs):
         model.train()
 
         loss = 0
-        for images, labels in train_loader:
+        for images, labels in data_loader:
 
             optimizer.zero_grad()
             log_ps = model(images)
-            loss = criterion(log_ps, labels)
-            loss.backward()
+            batch_loss = criterion(log_ps, labels)
+            batch_loss.backward()
             optimizer.step()
+            
+            batch_loss = batch_loss.item()
+            loss += batch_loss
 
-            loss += loss.item()
+            wandb.log({
+                'batch': batch,
+                'Batch loss per sample (train)': batch_loss / images.shape[0]},
+                step=batch)
+            batch += 1
 
-        train_losses.append(loss.item())
-        print(f"Epoch: {epoch}, Loss: {loss}")
+            if batch == test_steps:
+                return model, init_weights
+        
+        print(f'Epoch: {epoch}, Loss: {loss}')
+        wandb.log({'epoch': epoch, 'Train loss': loss}, step=batch-1)
 
-    return model, train_losses
+    
+    torch.onnx.export(model, images, args.model_path + '.onnx')
+    wandb.save(args.model_path + '.onnx')
 
+    return model
 
-def plot_loss(losses, fig_path):
-    """Plots training losses."""
-    fig, ax = plt.subplots()
-    ax.plot(losses, label="Train accuracy")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    ax.legend()
-    plt.savefig(fig_path)
+def evaluate(model, data_loader):
+    """Evaluates model."""
 
+    with torch.no_grad():
+        model.eval()
+        correct_preds, n_samples = 0, 0
+
+        for images, labels in data_loader:
+            ps = torch.exp(model(images))
+            top_p, top_class = ps.topk(1, dim=1)
+            equals = top_class == labels.view(*top_class.shape)
+
+            correct_preds += torch.sum(equals).item()
+            n_samples += images.shape[0]
+        
+        accuracy = correct_preds / n_samples
+    
+    print(f"Accuracy of classifier: {accuracy*100}%")
+
+    return accuracy
 
 def main():
+    # Setup
     args = parser()
-    model, train_losses = train(args)
+    wandb.init(project='MLOps test')
+    wandb.config.update(args)
+    train_loader, test_loader = get_data(args)
+
+    # Train and save
+    model = train(args, train_loader)
     save_checkpoint(args.model_path, model)
-    plot_loss(train_losses, args.fig_path)
+
+    # Evaluate
+    train_acc = evaluate(model, train_loader)
+    test_acc = evaluate(model, test_loader)
+    wandb.log({'train_accuracy': train_acc, 'test_accuracy': test_acc})
+
+    # Plot embeddings
+    embeddings, labels = get_embeddings(args, model, test_loader)
+    fig = plot_embeddings(embeddings, labels)
+    wandb.log({"Embeddings": wandb.Image(fig)})
+
+    wandb.finish()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

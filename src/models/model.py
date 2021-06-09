@@ -79,6 +79,9 @@ class ImageClassifier(nn.Module):
         self.embeddings = None
 
     def forward(self, x):
+        if x.ndim not in [3, 4]:
+            raise ValueError('Expected input to be a 3D or 4D tensor')
+
         x = self.dropout(F.relu(self.conv_1(x)))
         x = self.dropout(F.relu(self.conv_2(x)))
         x = self.dropout(self.max_pool(x))

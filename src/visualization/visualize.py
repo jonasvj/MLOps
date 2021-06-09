@@ -4,9 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from sklearn.manifold import TSNE
-from torchvision import datasets, transforms
 
 from src.models.model import ImageClassifier
+from src.utils import get_data
 
 
 def parser():
@@ -32,24 +32,18 @@ def load_checkpoint(filepath):
     return model
 
 
-def get_embeddings(args, model):
+def get_embeddings(args, model, data_loader):
     """Gets embeddings produced by model."""
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]
-    )
-    test_set = datasets.MNIST(
-        args.data_path, download=False, train=False, transform=transform
-    )
-    test_loader = torch.utils.data.DataLoader(
-        test_set, batch_size=args.mb_size, shuffle=False
-    )
-
     with torch.no_grad():
         model.eval()
-        embeddings = torch.zeros((len(test_set), model.linear.in_features))
-        all_labels = torch.zeros(len(test_set))
-        for i, (images, labels) in enumerate(test_loader):
-            model.forward(images)
+
+        embeddings = torch.zeros(
+            (len(data_loader.dataset.data), model.linear.in_features)
+        )
+        all_labels = torch.zeros(len(data_loader.dataset.data))
+
+        for i, (images, labels) in enumerate(data_loader):
+            model(images)
             embeddings[
                 i * args.mb_size : i * args.mb_size + images.shape[0], :
             ] = model.embeddings
@@ -58,9 +52,13 @@ def get_embeddings(args, model):
     return embeddings.numpy(), all_labels.numpy()
 
 
-def plot_embeddings(embeddings, labels, fig_path):
+def plot_embeddings(embeddings, labels):
     """Plots embeddings."""
-    embs_proj = TSNE(n_components=2, random_state=42).fit_transform(embeddings)
+    embs_proj = TSNE(
+        n_components=2,
+        random_state=42,
+        verbose=1,
+        n_jobs=-1).fit_transform(embeddings)
 
     fig, ax = plt.subplots()
     scatter = ax.scatter(
@@ -85,14 +83,16 @@ def plot_embeddings(embeddings, labels, fig_path):
         framealpha=0.6,
     )
 
-    plt.savefig(fig_path)
+    return fig
 
 
 def main():
     args = parser()
+    train_loader, test_loader = get_data(args)
     model = load_checkpoint(args.model_path)
-    embeddings, labels = get_embeddings(args, model)
-    plot_embeddings(embeddings, labels, args.fig_path)
+    embeddings, labels = get_embeddings(args, model, test_loader)
+    fig = plot_embeddings(embeddings, labels)
+    fig.savefig(args.fig_path)
 
 
 if __name__ == "__main__":
