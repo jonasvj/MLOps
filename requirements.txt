@@ -63,7 +63,7 @@ sphinxcontrib-htmlhelp==2.0.0
 sphinxcontrib-jsmath==1.0.1
 sphinxcontrib-qthelp==1.0.3
 sphinxcontrib-serializinghtml==1.1.5
--e git+git@github.com:jonasvj/MLOps.git@b1d0f1d86e6d3b8a9e2e27dcf5b05a9803c74724#egg=src
+-e git+git@github.com:jonasvj/MLOps.git@ef22a220005ce29ffcc852fadee82f37bdfc8e54#egg=src
 subprocess32==3.5.4
 threadpoolctl==2.1.0
 toml==0.10.2
