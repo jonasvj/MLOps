@@ -8,10 +8,10 @@ def get_data(args):
     )
 
     train_set = datasets.MNIST(
-        args.data_path, download=False, train=True, transform=transform
+        args.data_path, download=True, train=True, transform=transform
     )
     test_set = datasets.MNIST(
-        args.data_path, download=False, train=False, transform=transform
+        args.data_path, download=True, train=False, transform=transform
     )
 
     train_loader = torch.utils.data.DataLoader(

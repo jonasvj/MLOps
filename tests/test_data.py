@@ -7,9 +7,9 @@ transform = transforms.Compose(
     [transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
 
 train_set = datasets.MNIST(
-    data_path, download=False, train=True, transform=transform)
+    data_path, download=True, train=True, transform=transform)
 test_set = datasets.MNIST(
-    data_path, download=False, train=False, transform=transform)
+    data_path, download=True, train=False, transform=transform)
 
 
 class TestData:
