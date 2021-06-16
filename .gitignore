@@ -92,6 +92,7 @@ target/
 wandb_api_key.py
 wandb/
 /wandb/
+/wandb
 
 # azureml
 .azureml/
