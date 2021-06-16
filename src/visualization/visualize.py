@@ -5,31 +5,23 @@ import numpy as np
 import torch
 from sklearn.manifold import TSNE
 
+from src import project_dir
 from src.models.model import ImageClassifier
-from src.utils import get_data
-
+from src.data.mnist import MNISTDataModule
 
 def parser():
     """Parses command line."""
     parser = argparse.ArgumentParser(
         description="Script for visualizing embeddings created by image " "classifier"
     )
-    parser.add_argument("--model_path", default="models/model.pth", type=str)
-    parser.add_argument("--data_path", default="data/", type=str)
-    parser.add_argument("--fig_path", default="reports/figures/embeddings.pdf")
-    parser.add_argument("--mb_size", default=64, type=int)
+    parser.add_argument(
+        '--model_path', default=project_dir + '/models/model.pth', type=str)
+    parser.add_argument(
+        '--fig_path', default=project_dir + 'reports/figures/embeddings.pdf')
+    parser.add_argument('--mb_size', default=64, type=int)
     args = parser.parse_args()
 
     return args
-
-
-def load_checkpoint(filepath):
-    """Loads model."""
-    checkpoint = torch.load(filepath)
-    model = ImageClassifier(**checkpoint["kwargs"])
-    model.load_state_dict(checkpoint["state_dict"])
-
-    return model
 
 
 def get_embeddings(args, model, data_loader):
@@ -89,7 +81,8 @@ def plot_embeddings(embeddings, labels):
 def main():
     args = parser()
     train_loader, test_loader = get_data(args)
-    model = load_checkpoint(args.model_path)
+    model = ImageClassifier.load_from_checkpoint(
+        checkpoint_path=args.model_path)
     embeddings, labels = get_embeddings(args, model, test_loader)
     fig = plot_embeddings(embeddings, labels)
     fig.savefig(args.fig_path)

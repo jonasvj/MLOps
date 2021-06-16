@@ -1,29 +1,27 @@
-import torch.nn.functional as F
 from torch import nn
-
+import torch.nn.functional as F
+import pytorch_lightning as pl
+import torchmetrics
+from torch.optim import Adam
 
 def conv_dim(input_height, input_width, kernel_size, stride, padding):
-    new_height = int((input_height - kernel_size[0] + 2 * padding[0]) / stride[0] + 1)
-    new_width = int((input_width - kernel_size[1] + 2 * padding[1]) / stride[1] + 1)
+    new_height = int(
+        (input_height - kernel_size[0] + 2 * padding[0]) / stride[0] + 1)
+    new_width = int(
+        (input_width - kernel_size[1] + 2 * padding[1]) / stride[1] + 1)
 
     return (new_height, new_width)
 
 
-class ImageClassifier(nn.Module):
+class ConvNet(nn.Module):
+
     def __init__(self, height=28, width=28, channels=1, classes=10, dropout=0.25):
-        super(ImageClassifier, self).__init__()
-        self.kwargs = {
-            "height": height,
-            "width": width,
-            "channels": channels,
-            "classes": classes,
-            "dropout": dropout,
-        }
-        self.width = self.kwargs["width"]
-        self.height = self.kwargs["height"]
-        self.channels = self.kwargs["channels"]
-        self.classes = self.kwargs["classes"]
-        self.dropout_rate = self.kwargs["dropout"]
+        super(ConvNet, self).__init__()
+        self.width = width
+        self.height = height
+        self.channels = channels
+        self.classes = classes
+        self.dropout_rate = dropout
 
         self.conv_1 = nn.Conv2d(
             in_channels=self.channels,
@@ -77,7 +75,7 @@ class ImageClassifier(nn.Module):
         self.dropout = nn.Dropout(p=self.dropout_rate)
 
         self.embeddings = None
-
+    
     def forward(self, x):
         if x.ndim not in [3, 4]:
             raise ValueError('Expected input to be a 3D or 4D tensor')
@@ -86,6 +84,126 @@ class ImageClassifier(nn.Module):
         x = self.dropout(F.relu(self.conv_2(x)))
         x = self.dropout(self.max_pool(x))
 
-        self.embeddings = x.view(-1, self.linear.in_features)
+        self.embeddings = x.reshape(-1, self.linear.in_features)
+        
+        x = self.linear(self.embeddings)
 
-        return F.log_softmax(self.linear(self.embeddings), dim=1)
+        return x
+    
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = parent_parser.add_argument_group('ConvNet')
+        parser.add_argument('--height', type=int, default=28)
+        parser.add_argument('--width', type=int, default=28)
+        parser.add_argument('--channels', type=int, default=1)
+        parser.add_argument('--classes', type=int, default=10)
+        parser.add_argument('--dropout', type=float, default=0.25)
+    
+        return parent_parser
+    
+    @staticmethod
+    def from_argparse_args(namespace):
+        ns_dict = vars(namespace)
+        args = {
+            'height': ns_dict.get('height', 28),
+            'width': ns_dict.get('width', 28),
+            'channels': ns_dict.get('channels', 1),
+            'classes': ns_dict.get('classes', 10),
+            'dropout': ns_dict.get('dropout', 0.25),
+            }
+        
+        return args
+
+
+class ImageClassifier(pl.LightningModule):
+
+    def __init__(self, model, lr=3e-4):
+        super(ImageClassifier, self).__init__()
+        self.model = model
+        self.lr = lr
+        self.loss_func = nn.CrossEntropyLoss()
+        self.train_acc = torchmetrics.Accuracy()
+        self.val_acc = torchmetrics.Accuracy()
+        self.test_acc = torchmetrics.Accuracy()
+
+        self.save_hyperparameters()
+
+
+    def forward(self, x):
+        # use forward for inference/predictions
+        return self.model(x)
+
+
+    def training_step(self, batch, batch_idx):
+        images, targets = batch
+        preds = self.model(images)
+        loss = self.loss_func(preds, targets)
+
+        return {'loss': loss, 'preds': preds, 'targets': targets}
+    
+    
+    def training_step_end(self, outputs):
+        self.train_acc(F.softmax(outputs['preds'], dim=1), outputs['targets'])
+        self.log_dict(
+            {'train_acc': self.train_acc, 'train_loss': outputs['loss']},
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True)
+        
+        return outputs
+
+
+    def validation_step(self, batch, batch_idx):
+        images, targets = batch
+        preds = self.model(images)
+        loss = self.loss_func(preds, targets)
+
+        return {'loss': loss, 'preds': preds, 'targets': targets}
+
+
+    def validation_step_end(self, outputs):
+        self.val_acc(F.softmax(outputs['preds'], dim=1), outputs['targets'])
+        self.log_dict(
+            {'val_acc': self.val_acc, 'val_loss': outputs['loss']},
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True)
+
+
+    def test_step(self, batch, batch_idx):
+        images, targets = batch
+        preds = self.model(images)
+        loss = self.loss_func(preds, targets)
+
+        return {'loss': loss, 'preds': preds, 'targets': targets}
+
+
+    def test_step_end(self, outputs):
+        self.test_acc(F.softmax(outputs['preds'], dim=1), outputs['targets'])
+        self.log_dict(
+            {'test_acc': self.test_acc, 'test_loss': outputs['loss']},
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False)
+
+
+    def configure_optimizers(self):
+        return Adam(self.parameters(), lr=self.lr)
+    
+
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = parent_parser.add_argument_group('ImageClassifier')
+        parser.add_argument('--lr', default=3e-4, type=float)
+
+        return parent_parser
+    
+    
+    @staticmethod
+    def from_argparse_args(namespace):
+        ns_dict = vars(namespace)
+        args = {
+            'lr': ns_dict.get('lr', 3e-4),
+            }
+        
+        return args
